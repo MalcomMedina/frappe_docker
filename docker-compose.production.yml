@@ -65,7 +65,7 @@ services:
       SOCKETIO: websocket:9000
       FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME_HEADER:-$$host}
       UPSTREAM_REAL_IP_ADDRESS: ${UPSTREAM_REAL_IP_ADDRESS:-172.16.0.0/12}
-      UPSTREAM_REAL_IP_HEADER: ${UPSTREAM_REAL_IP_HEADER:-X-Real-IP}
+      UPSTREAM_REAL_IP_HEADER: ${UPSTREAM_REAL_IP_HEADER:-X-Forwarded-For}
       UPSTREAM_REAL_IP_RECURSIVE: ${UPSTREAM_REAL_IP_RECURSIVE:-off}
       PROXY_READ_TIMEOUT: ${PROXY_READ_TIMEOUT:-120}
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
@@ -74,10 +74,16 @@ services:
     depends_on:
       - backend
       - websocket
-    ports:
-      - ${FRONTEND_PORT:-8080}:8080
     networks:
+      - traefik-public
       - bench-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.http.services.${ROUTER:-erpnext-production}.loadbalancer.server.port=8080
+      - traefik.http.routers.${ROUTER:-erpnext-production}-http.entrypoints=web
+      - traefik.http.routers.${ROUTER:-erpnext-production}-http.rule=Host(${SITES:?List of sites not set})
+      - traefik.http.routers.${ROUTER:-erpnext-production}-http.service=${ROUTER:-erpnext-production}
 
   websocket:
     <<: [*depends_on_configurator, *customizable_image]
@@ -157,12 +163,32 @@ services:
       - bench-network
       - postgres-network
 
+  proxy:
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      # Keep v2 rule syntax for now
+      - --core.defaultRuleSyntax=v2
+      - --entrypoints.web.address=:80
+      # Nginx handles SSL, so we only need HTTP entrypoint
+      # Traefik will receive X-Forwarded-Proto: https from nginx
+    ports:
+      - ${HTTP_PUBLISH_PORT:-9080}:80
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik-public
+
 volumes:
   sites:
   db-data:
   redis-queue-data:
 
 networks:
+  traefik-public:
+    external: true
   postgres-network:
     external: true
   bench-network:
