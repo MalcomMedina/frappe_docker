@@ -35,24 +35,27 @@ services:
         bench set-config -gp socketio_port $$SOCKETIO_PORT;
     environment:
       DB_HOST: db
-      DB_PORT: "5432"
+      DB_PORT: "3306"
       REDIS_CACHE: redis-cache:6379
       REDIS_QUEUE: redis-queue:6379
       SOCKETIO_PORT: 9000
     depends_on:
-      - db
-      - redis-cache
-      - redis-queue
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
     restart: on-failure
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   backend:
     <<: *backend_defaults
     platform: linux/amd64
     networks:
-      - postgres-network
+      - mariadb-network
       - bench-network
 
   frontend:
@@ -95,7 +98,7 @@ services:
       - sites:/home/frappe/frappe-bench/sites
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   queue-short:
     <<: *backend_defaults
@@ -103,7 +106,7 @@ services:
     command: bench worker --queue short,default
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   queue-long:
     <<: *backend_defaults
@@ -111,7 +114,7 @@ services:
     command: bench worker --queue long,default,short
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   scheduler:
     <<: *backend_defaults
@@ -119,7 +122,7 @@ services:
     command: bench schedule
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
     labels:
       ofelia.enabled: "true"
       ofelia.job-exec.datecron.schedule: "${BACKUP_CRONSTRING:-@every 6h}"
@@ -137,22 +140,34 @@ services:
       - bench-network
 
   db:
-    image: postgres:13.5
-    command: []
-    environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?No db password set}
-    volumes:
-      - db-data:/var/lib/postgresql/data
-    networks:
-      - postgres-network
+    image: mariadb:11.8
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?No db password set}
+      MARIADB_ROOT_PASSWORD: ${DB_PASSWORD:?No db password set}
+      MARIADB_AUTO_UPGRADE: 1
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - mariadb-network
 
   redis-cache:
     image: redis:6.2-alpine
     restart: unless-stopped
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   redis-queue:
     image: redis:6.2-alpine
@@ -161,7 +176,7 @@ services:
       - redis-queue-data:/data
     networks:
       - bench-network
-      - postgres-network
+      - mariadb-network
 
   proxy:
     image: traefik:v3.6
@@ -189,7 +204,7 @@ volumes:
 networks:
   traefik-public:
     external: true
-  postgres-network:
+  mariadb-network:
     external: true
   bench-network:
     name: ${ROUTER:-erpnext-production}
