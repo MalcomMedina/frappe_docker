@@ -140,10 +140,11 @@ services:
       - bench-network
 
   db:
-    image: mariadb:11.8
+    image: mariadb:10.8
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      start_period: 5s
+      # MYSQL_PWD ensures the password is passed; -p can fail to expand in healthcheck shell
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MARIADB_ROOT_PASSWORD\" mysqladmin ping -h localhost -u root || exit 1"]
+      start_period: 10s
       interval: 5s
       timeout: 5s
       retries: 5
@@ -207,6 +208,5 @@ networks:
   mariadb-network:
     external: true
   bench-network:
-    name: ${ROUTER:-erpnext-production}
+    name: erpnext
     external: false
-
